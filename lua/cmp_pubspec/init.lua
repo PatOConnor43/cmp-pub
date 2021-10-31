@@ -1,11 +1,12 @@
 local cmp = require('cmp')
 local job = require('plenary.job')
+local cancellable_job = require('cmp_pubspec.util.cancellable_job')
 
 local endpoint = "https://pub.dartlang.org/api"
 local useragent = vim.fn.shellescape("cmp_pubspec (https://github.com/PatOConnor43/cmp_pubspec)")
 local header = "Content-Type: application/json"
-local running_job_timer = nil
 local name_cache = {}
+local cjob = nil
 
 
 local source = {}
@@ -32,30 +33,23 @@ local function simple_case_without_version(name, completion_callback)
     end
 
     local url = endpoint .. "/search?q=" .. name .. "&page=1"
-    -- handle simple case with version
-    local function query_json()
-        local function on_exit(j, code, _)
-            if code ~= 0 then
-                return
-            end
-            local resp = table.concat(j:result(), "\n")
-            print('resp ' .. name .. ' ' .. resp)
-            vim.schedule(function()
-                local items = parse_packages_json(resp)
-                name_cache[name] = items
-                completion_callback(items)
-            end)
-        end
-        local j = job:new {
-            command = "curl",
-            args = { "-sLA", useragent, url,"-H", header},
-            on_exit = on_exit,
-        }
 
-        j:start()
+    local j = job:new {
+        command = "curl",
+        args = { "-sLA", useragent, url,"-H", header},
+    }
+
+    local result, code = j:sync()
+    if code ~= 0 then
+        completion_callback()
+        return
     end
+    local resp = table.concat(result, "\n")
+    print('resp ' .. name .. ' ' .. resp)
+    local items = parse_packages_json(resp)
+    name_cache[name] = items
+    completion_callback(items)
 
-    pcall(query_json)
 end
 
 source.new = function()
@@ -89,36 +83,30 @@ end
 --end
 
 function source.complete(self, params, callback)
-    local items = {}
-    job_cancelled = false
-    --print(vim.inspect(params))
-    table.insert(items, {label = 'asdf'})
     local cur_line = params.context.cursor_line
 
     -- Try to match simple case with version
     local name, version = cur_line:match('([%w_]+): (.*)')
-    --print(name, version)
     if name ~= nil and version ~= nil then
         return
     end
 
     name = cur_line:match('([%w_]+)(.*)')
-    print('hey ' .. name)
+    print('incoming name ' .. name)
     if name ~= nil then
-        --global_name = name
-        --if running_job_timer ~= nil then
-        --   running_job_timer:stop()
-        --   running_job_timer:close()
-        --   running_job_timer = nil
-        --   print('New timer')
-        --end
-        running_job_timer = vim.loop.new_timer()
-        running_job_timer:start(500, 0, function()
-            print('Timer expired')
-            vim.schedule(function() simple_case_without_version(name, callback) end)
-            running_job_timer:close()
-            running_job_timer = nil
-        end)
+        if cjob ~= nil then
+            cjob:cancel()
+            cjob = nil
+        end
+        local on_run = function()
+            simple_case_without_version(name, callback)
+        end
+        local on_cancel = function()
+            print('cancelled')
+            callback()
+        end
+        cjob = cancellable_job.new({duration = 1000, on_run = on_run, on_cancel = on_cancel})
+        cjob:start()
 
     end
 end
