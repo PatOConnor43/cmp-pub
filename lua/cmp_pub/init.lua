@@ -1,9 +1,9 @@
 local cmp = require('cmp')
 local job = require('plenary.job')
-local cancellable_job = require('cmp_pubspec.util.cancellable_job')
+local cancellable_job = require('cmp_pub.util.cancellable_job')
 
 local endpoint = "https://pub.dartlang.org/api"
-local useragent = vim.fn.shellescape("cmp_pubspec (https://github.com/PatOConnor43/cmp_pubspec)")
+local useragent = vim.fn.shellescape("cmp_pubspec (https://github.com/PatOConnor43/cmp_pub)")
 local header = "Content-Type: application/json"
 local name_cache = {}
 local cjob = nil
@@ -63,7 +63,7 @@ source.is_available = function()
 end
 
 function source.get_debug_name()
-    return 'pubspec'
+    return 'pub'
 end
 
 function source.resolve(self, completion_item, callback)

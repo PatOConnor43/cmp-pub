@@ -1,1 +1,1 @@
-require'cmp'.register_source('pubspec', require'cmp_pubspec'.new())
+require'cmp'.register_source('pub', require'cmp_pub'.new())
