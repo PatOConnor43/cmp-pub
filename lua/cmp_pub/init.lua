@@ -11,6 +11,11 @@ local cjob = nil
 
 
 local source = {}
+
+local function string_not_empty(s)
+    return s ~= nil and s:gsub('%s*', '') ~= nil
+end
+
 local function parse_packages_json(response)
     if not response then
         return nil
@@ -41,7 +46,7 @@ local function parse_versions_json(response)
     return packages_items
 end
 
-local function simple_case_without_version(name, completion_callback)
+local function complete_names(name, completion_callback)
     if name_cache[name] then
         completion_callback(name_cache[name])
         return
@@ -60,20 +65,22 @@ local function simple_case_without_version(name, completion_callback)
         return
     end
     local resp = table.concat(result, "\n")
-    print('resp ' .. name .. ' ' .. resp)
     local items = parse_packages_json(resp)
     name_cache[name] = items
     completion_callback(items)
 
 end
 
-local function simple_case_with_version(name, completion_callback)
+local function complete_versions(name, completion_callback, package_host)
+    if package_host ==  nil then
+        package_host = endpoint
+    end
     if version_cache[name] then
         completion_callback(version_cache[name])
         return
     end
 
-    local url = endpoint .. "/packages/" .. name
+    local url = package_host .. "/packages/" .. name
 
     local j = job:new {
         command = "curl",
@@ -86,11 +93,39 @@ local function simple_case_with_version(name, completion_callback)
         return
     end
     local resp = table.concat(result, "\n")
-    print('resp ' .. name .. ' ' .. resp)
     local items = parse_versions_json(resp)
     version_cache[name] = items
     completion_callback(items)
 
+end
+
+local function search_for_hosted_name(row_to_search)
+    -- An example of what the 'hosted' dependency looks like:
+    -- package_name:
+    --   hosted:
+    --     name: package_name
+    --     url: pub.private.com
+    --   version: ^0.0.1    <- row_to_search should point here
+    --
+    -- The intent of this function is to find the top-most 'package_name' key and use that
+    -- as the name to search versions for.
+    local highest_potential_line = row_to_search - 5
+    local lines = vim.api.nvim_buf_get_lines(0, highest_potential_line, row_to_search, false)
+    local package_name_regex = '^%s%s([%w_]+):$'
+    local url_regex = '^%s%s%s%s%s%surl:%s*(.*)$'
+    local package_match = nil
+    local url_match = nil
+    for _, line in ipairs(lines) do
+       local potential_package_match = line:match(package_name_regex)
+       if potential_package_match ~= nil then
+          package_match = potential_package_match
+       end
+       local potential_url_match = line:match(url_regex)
+       if potential_url_match ~= nil then
+          url_match = potential_url_match .. '/api'
+       end
+    end
+    return package_match, url_match
 end
 
 source.new = function()
@@ -128,11 +163,45 @@ end
 
 function source.complete(self, params, callback)
     local cur_line = params.context.cursor_line
-    local name, version
+    local name, version, package_host
+
+
+    -- Try to match the literal string 'version:' for 'hosted' dependencies
+    version = cur_line:match('%s%s%s%sversion:%s*(.*)')
+    if version ~= nil then
+        -- In this case we need to look through the yaml and find the actual name of the package.
+        -- The name of the package should be above this line. We just may need to search up a couple lines.
+        local cursor_row = params.context.cursor.row
+        local cursor_col = params.context.cursor.col
+        name, package_host = search_for_hosted_name(cursor_row)
+
+        local colon_index = cur_line:find(':')
+        if not colon_index then
+            callback()
+            return
+        end
+        print(colon_index < cursor_col)
+        if colon_index < cursor_col then
+            local on_run = function()
+                complete_versions(name, callback, package_host)
+            end
+            local on_cancel = function()
+                print('cancelled')
+                callback()
+            end
+            cjob = cancellable_job.new({duration = 1000, on_run = on_run, on_cancel = on_cancel})
+            cjob:start()
+
+        end
+
+        return
+    end
+
+
 
     -- Try to match simple case with version
-    name, version = cur_line:match('%s%s([%w_]+):%s?(.*)')
-    if name ~= nil and version ~= nil then
+    name, version = cur_line:match('%s%s([%w_]+):%s*(.*)')
+    if string_not_empty(name) and version ~= nil then
         print('incoming name: ' .. name .. ' version: ' .. version)
         local cursor = vim.api.nvim_win_get_cursor(0)
         local row = cursor[1]
@@ -145,7 +214,7 @@ function source.complete(self, params, callback)
         end
         if colon_index < col then
             local on_run = function()
-                simple_case_with_version(name, callback)
+                complete_versions(name, callback)
             end
             local on_cancel = function()
                 print('cancelled')
@@ -160,14 +229,14 @@ function source.complete(self, params, callback)
     end
 
     name = cur_line:match('%s%s([%w_]+)(.*)')
-    if name ~= nil and name:gsub('%s*', '') ~= '' then
+    if string_not_empty(name) then
         print('incoming name ' .. name)
         if cjob ~= nil then
             cjob:cancel()
             cjob = nil
         end
         local on_run = function()
-            simple_case_without_version(name, callback)
+            complete_names(name, callback)
         end
         local on_cancel = function()
             print('cancelled')

@@ -12,7 +12,6 @@ function CancellableJob.new(opts)
 end
 
 CancellableJob.start = function(self)
-   print('is cancelled1? ' .. tostring(self.cancelled))
    if self.cancelled then
        return
     end
@@ -20,7 +19,6 @@ CancellableJob.start = function(self)
    timer:start(self.duration, 0, function()
       timer:stop()
       timer:close()
-      print('is cancelled2? ' .. tostring(self.cancelled))
       if self.cancelled then
          return
       end
